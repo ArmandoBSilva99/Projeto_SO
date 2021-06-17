@@ -259,10 +259,7 @@ void fillAurray(char * line, int i){
 
 void fillConfig(char* path){
     int fd;
-    char buffer[255];
-    strcpy(buffer,"../");
-    strcat(buffer, path);
-    if((fd = open(buffer, O_RDONLY, 0644)) == -1){
+    if((fd = open(path, O_RDONLY, 0644)) == -1){
         perror("File doesn't exist!\n");
         exit(-1);
     }
@@ -295,8 +292,10 @@ int main(int args, char* argv[]){
     if (args == 3){
         fillConfig(argv[1]);
 
-        if ((strcmp(argv[2], "aurras-filters") != 0))
+        if ((strcmp(argv[2], "aurras-filters") != 0)){
+            write(1, "Filtros não encontrados!\n",26);
             exit(-1);
+        }    
     }
     else {
         write(1,"Argumentos errados! Tente:\n./aurrasd config-filename filters-folder\n",68);
