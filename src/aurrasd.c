@@ -52,6 +52,7 @@ int numPids[2048];
 int lastProcess = 0;
 int tExec = -1;
 int tInac = -1;
+char* path_filters;
 
 //pipe
 int server_client_fifo;
@@ -72,16 +73,16 @@ ssize_t myreadln(int fildes, void* buf, size_t nbyte){
 
 void aumentaFiltros(char** filters)
 {
-    for (int i = 0; i < 3; i++)
-        for(int j = 0; j < 5; j++) 
+    for (int i = 0; i < 3 && filters[i]; i++)
+        for(int j = 0; j < 5 && filters[i][j]; j++) 
             if ((strcmp(filters[i],aurray[j].name) == 0))
                 aurray[j].max++;
 }
 
 void diminuiFiltros(char** filters)
 {
-    for (int i = 0; i < 3; i++)
-        for(int j = 0; j < 5; j++) 
+    for (int i = 0; i < 3 && filters[i]; i++)
+        for(int j = 0; j < 5 && filters[i][j]; j++) 
             if ((strcmp(filters[i],aurray[j].name) == 0))
                 aurray[j].max--;
 }
@@ -110,16 +111,37 @@ void child_handler(int sig){
 
 void exec_filtros(char* filtro){
 
-    if (strcmp(filtro,"echo") == 0)        
-        execl("aurrasd-filters/aurrasd-echo","aurrasd-echo", NULL);
-    if (strcmp(filtro,"alto") == 0)
-        execl("aurrasd-filters/aurrasd-gain-double","aurrasd-gain-double", NULL);
-    if (strcmp(filtro,"baixo") == 0)
-        execl("aurrasd-filters/aurrasd-gain-half","aurrasd-gain-half", NULL);
-    if (strcmp(filtro,"rapido") == 0)
-        execl("aurrasd-filters/aurrasd-tempo-double","aurrasd-tempo-double", NULL);
-    if (strcmp(filtro,"lento") == 0)
-        execl("aurrasd-filters/aurrasd-tempo-half","aurrasd-tempo-half", NULL);
+
+    if (strcmp(filtro,"eco") == 0){
+        char* filters = malloc(sizeof(char) * 100);
+        sprintf(filters, "%s/aurrasd-echo", path_filters);
+        write(1,filters, 40);
+        execl(filters,"aurrasd-echo", NULL);
+    }    
+    if (strcmp(filtro,"alto") == 0){
+        char* filters = malloc(sizeof(char) * 100);
+        sprintf(filters, "%s/aurrasd-gain-double", path_filters);
+        printf("filter -> %s\n", filters);
+        execl(filters,"aurrasd-gain-double", NULL);
+    }    
+    if (strcmp(filtro,"baixo") == 0){
+        char* filters = malloc(sizeof(char) * 100);
+        sprintf(filters, "%s/aurrasd-gain-half", path_filters);
+        printf("filter -> %s\n", filters);
+        execl(filters,"aurrasd-gain-half", NULL);
+    }    
+    if (strcmp(filtro,"rapido") == 0){
+        char* filters = malloc(sizeof(char) * 100);
+        sprintf(filters, "%s/aurrasd-tempo-double", path_filters);
+        printf("filter -> %s\n", filters);
+        execl(filters,"aurrasd-tempo-double", NULL);
+    }    
+    if (strcmp(filtro,"lento") == 0){
+        char* filters = malloc(sizeof(char) * 100);
+        sprintf(filters, "%s/aurrasd-tempo-half", path_filters);
+        printf("filter -> %s\n", filters);
+        execl(filters,"aurrasd-tempo-half", NULL);
+    }    
 }
 
 void transform()
@@ -131,9 +153,11 @@ void transform()
     printf("PROCESSO -> %s\n", processes[lastProcess].message);
         
     char * buffer = strdup(processes[lastProcess].message);
+    printf("dupped\n");
     array[io] = strtok(buffer," ");
 
     while(array[io] != NULL){
+        printf("array[io]->%s\n",array[io]);
         array[++io] = strtok(NULL," ");
     }
 
@@ -141,7 +165,7 @@ void transform()
         exitMatrix[lastProcess][i] = EXECUTING;
 
     diminuiFiltros(processes[lastProcess].filtros);      
-
+    printf("Diminuiu Filtros\n");
     io--;
 
     int in = open(array[1], O_RDONLY,0644);
@@ -158,6 +182,7 @@ void transform()
 
     if(io > 3)
     {
+        printf("\nHELLO\n");
         int acc = 0;
         dup2(in, 0);
         close(in);
@@ -166,7 +191,8 @@ void transform()
             if (i < io)
                 pipe(afterPipe);
             if ((pid = fork()) == 0) 
-            {
+            {   
+                printf("Son says HI!\n");
                 if (i > 3) 
                 {
                     dup2(beforePipe, 0);
@@ -183,6 +209,7 @@ void transform()
                     dup2(out,1);
                     close(out);
                 }
+                
                 exec_filtros(array[i]);
                 exit(0);
             }
@@ -201,7 +228,8 @@ void transform()
     else 
     {
         if((pid = fork()) == 0) 
-        {
+        {   
+            printf("Im in\narray[3]: %s\n", array[3]);
             dup2(out, 1);
             dup2(in, 0);
             close(in);
@@ -224,8 +252,8 @@ void transform()
 
 
 int checkConfig(char** filters){
-    for (int i = 0; i < 3; i++)
-        for(int j = 0; j < 5; j++) 
+    for (int i = 0; i < 3 && filters[i]; i++)
+        for(int j = 0; j < 5 && filters[i][j]; j++) 
             if ((strcmp(filters[i],aurray[j].name) == 0) && aurray[j].max == 0)
                 return 0;
     return 1;
@@ -239,9 +267,7 @@ void alarm_handler(int sig)
         if((exitStatus[i] == WAITING) && checkConfig(processes[i].filtros)){
             exitStatus[i] = EXECUTING;
             printf("EXIT STATUS -> %d -> %d",i, exitStatus[i]);
-            //server_client_fifo = open("server_client_fifo", O_WRONLY);
             transform();
-            //close(server_client_fifo);
         }
     }
 
@@ -276,7 +302,6 @@ void fillConfig(char* path){
 }
 
 
-
 char* writeConfig(){
     char* ret = malloc(sizeof(char)*30*5);
     for(int i = 0; i < 5; i++){
@@ -287,15 +312,48 @@ char* writeConfig(){
     return ret;    
 }
 
+void checkfilters(char* path){
+    int fd_echo;
+    int fd_double;
+    int fd_half;
+    int fd_temp_double;
+    int fd_temp_half;
+    
+    char* newpathecho = strdup(path);
+    char* newpathdouble = strdup(path);
+    char* newpathhalf = strdup(path);
+    char* newpathtempdouble = strdup(path);
+    char* newpathtemphalf = strdup(path);
+       
+    char* echo = strcat(newpathecho,"/aurrasd-echo");
+    char* doubl = strcat(newpathdouble,"/aurrasd-gain-double");
+    char* half = strcat(newpathhalf,"/aurrasd-gain-half");
+    char* temp_double = strcat(newpathtempdouble,"/aurrasd-tempo-double");
+    char* temp_half = strcat(newpathtemphalf,"/aurrasd-tempo-half");
+
+    
+    if(((fd_echo = open(echo, O_RDONLY, 0644)) == -1) && ((fd_double = open(doubl, O_RDONLY, 0644)) == -1) && ((fd_half = open(half, O_RDONLY, 0644)) == -1) 
+        && ((fd_temp_double = open(temp_double, O_RDONLY, 0644)) == -1) && ((fd_temp_half = open(temp_half, O_RDONLY, 0644)) == -1)){
+        perror("Wrong filter file!\n");
+        exit(-1);
+    }
+
+
+    close(fd_echo);
+    close(fd_double);
+    close(fd_half);
+    close(fd_temp_double);
+    close(fd_temp_half);
+}
+
 
 int main(int args, char* argv[]){
+    path_filters = strdup(argv[2]);
+    printf("\npath filters -> %s\n", path_filters);
     if (args == 3){
         fillConfig(argv[1]);
 
-        if ((strcmp(argv[2], "aurras-filters") != 0)){
-            write(1, "Filtros não encontrados!\n",26);
-            exit(-1);
-        }    
+        checkfilters(path_filters);    
     }
     else {
         write(1,"Argumentos errados! Tente:\n./aurrasd config-filename filters-folder\n",68);
@@ -325,43 +383,41 @@ int main(int args, char* argv[]){
 
             processes[lastProcess].message = strdup(buffer);
 
-
             array[io] = strtok(buffer," ");
 
             while(array[io] != NULL){
                 array[++io] = strtok(NULL," ");
             }
 
-
             char** message_filters = (char**) malloc(3 * sizeof(char*));
 
-            for (int j = 0; j < 3; j++)
+            for (int i = 0; i < io; i++)
+                printf("array[%d] -> %s\n", i,array[i]);
+            
+            for (int j = 0; j < 3 && array[j+3]; j++)
                 message_filters[j] = strdup(array[j+3]); 
 
+            printf("HEHE\n");
             processes[lastProcess].filtros = malloc(sizeof(char*) * (io-3));
                 
-            for (int j = 0; j < io-3;j++)
-                processes[lastProcess].filtros[j] = strdup(message_filters[j]);
-
-            for (int i = 0; i < io-3; i++)
-                printf("[%d] -> %s\n", i,processes[lastProcess].filtros[i]); 
-
-            for (int i = 0; i < io-3; i++)
-                printf("[%d] -> %s\n", i, message_filters[i]);      
-
-        
+            for (int j = 0; j < io-3 && message_filters[j];j++)
+                processes[lastProcess].filtros[j] = strdup(message_filters[j]);     
+            
+            printf("HELP\n");
             if(checkConfig(processes[lastProcess].filtros) == 0){
-                //write(server_client_fifo, "Pending...\n", 11);
+                printf("bruv\n");
                 exitStatus[lastProcess] = WAITING;
-                alarm(1);            
+                alarm(1);           
             }
             else
                 exitStatus[lastProcess] = EXECUTING;
+               
         }
         
-        if(processes[lastProcess].message && strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING))
+        if(processes[lastProcess].message && strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING)){
+            printf("executing transform\n");
             transform();
-        
+        }
         if(strncmp(buffer, "status", 6) == 0) {
 
             char message[1024];
