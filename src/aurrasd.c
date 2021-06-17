@@ -257,11 +257,13 @@ void fillAurray(char * line, int i){
 }
 
 
-void fillConfig(){
+void fillConfig(char* path){
     int fd;
-
-    if((fd = open("../etc/aurrasd.conf", O_RDONLY, 0644)) == -1){
-        perror("File [/etc/aurrasd.config] doesn't exist!\n");
+    char buffer[255];
+    strcpy(buffer,"../");
+    strcat(buffer, path);
+    if((fd = open(buffer, O_RDONLY, 0644)) == -1){
+        perror("File doesn't exist!\n");
         exit(-1);
     }
 
@@ -289,9 +291,17 @@ char* writeConfig(){
 }
 
 
-int main(){
-    
-    fillConfig();
+int main(int args, char* argv[]){
+    if (args == 3){
+        fillConfig(argv[1]);
+
+        if ((strcmp(argv[2], "aurras-filters") != 0))
+            exit(-1);
+    }
+    else {
+        write(1,"Argumentos errados! Tente:\n./aurrasd config-filename filters-folder\n",68);
+        exit(-1);
+    }
 
     mkfifo("client_server_fifo", 0644);
     mkfifo("server_client_fifo", 0644);
