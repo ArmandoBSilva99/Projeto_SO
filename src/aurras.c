@@ -22,6 +22,7 @@ int main(int argc, char** argv){
 	    printf("%d\n", bytesRead);
 	    while((bytesRead = read(server_client_fifo, string, MESSAGESIZE)) > 0){
             write(STDOUT_FILENO, string, bytesRead);
+	    	//close(client_server_fifo);
 	    }
 	    close(server_client_fifo);
 	}

@@ -53,6 +53,9 @@ int lastProcess = 0;
 int tExec = -1;
 int tInac = -1;
 
+//pipe
+int server_client_fifo;
+
 ssize_t myreadln(int fildes, void* buf, size_t nbyte){
     ssize_t size = 0;
     char c;
@@ -105,6 +108,121 @@ void child_handler(int sig){
     }
 }
 
+void exec_filtros(char* filtro){
+
+    if (strcmp(filtro,"echo") == 0)        
+        execl("aurrasd-filters/aurrasd-echo","aurrasd-echo", NULL);
+    if (strcmp(filtro,"alto") == 0)
+        execl("aurrasd-filters/aurrasd-gain-double","aurrasd-gain-double", NULL);
+    if (strcmp(filtro,"baixo") == 0)
+        execl("aurrasd-filters/aurrasd-gain-half","aurrasd-gain-half", NULL);
+    if (strcmp(filtro,"rapido") == 0)
+        execl("aurrasd-filters/aurrasd-tempo-double","aurrasd-tempo-double", NULL);
+    if (strcmp(filtro,"lento") == 0)
+        execl("aurrasd-filters/aurrasd-tempo-half","aurrasd-tempo-half", NULL);
+}
+
+void transform()
+{
+    char *array[100];
+    int io = 0;
+
+    printf("Message: %s\n", processes[lastProcess].message);
+    printf("PROCESSO -> %s\n", processes[lastProcess].message);
+        
+    char * buffer = strdup(processes[lastProcess].message);
+    array[io] = strtok(buffer," ");
+
+    while(array[io] != NULL){
+        array[++io] = strtok(NULL," ");
+    }
+
+    for(int i = 0; i < 3; i++)
+        exitMatrix[lastProcess][i] = EXECUTING;
+
+    diminuiFiltros(processes[lastProcess].filtros);      
+
+    io--;
+
+    int in = open(array[1], O_RDONLY,0644);
+    int out = open(array[2], O_WRONLY | O_TRUNC | O_CREAT,0644);
+
+    char message[100];
+    sprintf(message, "\nnova tarefa #%d\n\n", lastProcess + 1);
+    write(server_client_fifo, message, strlen(message));
+    close(server_client_fifo);
+            
+    int pid;
+    int beforePipe = in;
+    int afterPipe[2];
+
+    if(io > 3)
+    {
+        int acc = 0;
+        dup2(in, 0);
+        close(in);
+        for (int i = 3; i <= io; i++) 
+        {
+            if (i < io)
+                pipe(afterPipe);
+            if ((pid = fork()) == 0) 
+            {
+                if (i > 3) 
+                {
+                    dup2(beforePipe, 0);
+                    close(beforePipe);
+                }
+                if (i < io) 
+                {
+                    dup2(afterPipe[1], 1);
+                    close(afterPipe[0]);
+                    close(afterPipe[1]);
+                }
+                if(i == io)
+                {
+                    dup2(out,1);
+                    close(out);
+                }
+                exec_filtros(array[i]);
+                exit(0);
+            }
+            if (i < io) 
+                close(afterPipe[1]);
+            if (i > 3)
+                close(beforePipe);
+            
+            beforePipe = afterPipe[0];
+            pids[lastProcess][acc] = pid;
+            processes[lastProcess].pid = pid;
+            acc++;
+
+        }
+    } 
+    else 
+    {
+        if((pid = fork()) == 0) 
+        {
+            dup2(out, 1);
+            dup2(in, 0);
+            close(in);
+            close(out);
+                    
+            exec_filtros(array[3]);
+            _exit(0);
+        }
+        else
+        {
+            pids[lastProcess][0] = pid;
+            printf("PIDS[%d][0] -> %d\n",lastProcess,pids[lastProcess][0]);
+        }
+    }
+    
+    lastProcess++;
+    close(in);
+    close(out);
+}
+
+
 int checkConfig(char** filters){
     for (int i = 0; i < 3; i++)
         for(int j = 0; j < 5; j++) 
@@ -121,25 +239,16 @@ void alarm_handler(int sig)
         if((exitStatus[i] == WAITING) && checkConfig(processes[i].filtros)){
             exitStatus[i] = EXECUTING;
             printf("EXIT STATUS -> %d -> %d",i, exitStatus[i]);
+            //server_client_fifo = open("server_client_fifo", O_WRONLY);
+            transform();
+            //close(server_client_fifo);
         }
     }
 
     alarm(1);
 }
 
-void exec_filtros(char* filtro){
 
-    if (strcmp(filtro,"echo") == 0)        
-        execl("aurrasd-filters/aurrasd-echo","aurrasd-echo", NULL);
-    if (strcmp(filtro,"alto") == 0)
-        execl("aurrasd-filters/aurrasd-gain-double","aurrasd-gain-double", NULL);
-    if (strcmp(filtro,"baixo") == 0)
-        execl("aurrasd-filters/aurrasd-gain-half","aurrasd-gain-half", NULL);
-    if (strcmp(filtro,"rapido") == 0)
-        execl("aurrasd-filters/aurrasd-tempo-double","aurrasd-tempo-double", NULL);
-    if (strcmp(filtro,"lento") == 0)
-        execl("aurrasd-filters/aurrasd-tempo-half","aurrasd-tempo-half", NULL);
-}
 
 void fillAurray(char * line, int i){
     aurray[i].name = strdup(strtok(line, " "));
@@ -179,6 +288,7 @@ char* writeConfig(){
     return ret;    
 }
 
+
 int main(){
     
     fillConfig();
@@ -190,8 +300,8 @@ int main(){
     while(1){
 
         char* buffer = calloc(MESSAGESIZE, sizeof(char));
-        int client_server_fifo = open("client_server_fifo", O_RDONLY);
-        int server_client_fifo = open("server_client_fifo", O_WRONLY);
+        int client_server_fifo = open("client_server_fifo", O_RDONLY); 
+        server_client_fifo = open("server_client_fifo", O_WRONLY);
         printf("AQUI\n");
         read(client_server_fifo, buffer, MESSAGESIZE);
         printf("%s\n", buffer);
@@ -240,86 +350,9 @@ int main(){
                 exitStatus[lastProcess] = EXECUTING;
         }
         
-
-        printf("V: %s ES:%d", processes[lastProcess].message,exitStatus[lastProcess]);
-        if(strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING))
-        {            
-            printf("Message: %s\n", processes[lastProcess].message);
-            printf("PROCESSO -> %s\n", processes[lastProcess].message);
+        if(processes[lastProcess].message && strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING))
+            transform();
         
-
-            for(int i = 0; i < 3; i++)
-                exitMatrix[lastProcess][i] = EXECUTING;
-
-            diminuiFiltros(processes[lastProcess].filtros);      
-
-            io--;
-
-            int in = open(array[1], O_RDONLY,0644);
-            int out = open(array[2], O_WRONLY | O_TRUNC | O_CREAT,0644);
-
-            char message[100];
-            sprintf(message, "\nnova tarefa #%d\n\n", lastProcess + 1);
-            write(server_client_fifo, message, strlen(message));
-            close(server_client_fifo);
-            
-            int pid;
-            int beforePipe = in;
-            int afterPipe[2];
-
-            if(io > 3){
-                int acc = 0;
-                dup2(in, 0);
-                close(in);
-                for (int i = 3; i <= io; i++) {
-                    if (i < io)
-                        pipe(afterPipe);
-                    if ((pid = fork()) == 0) {
-                        if (i > 3) {
-                            dup2(beforePipe, 0);
-                            close(beforePipe);
-                        }
-                        if (i < io) {
-                            dup2(afterPipe[1], 1);
-                            close(afterPipe[0]);
-                            close(afterPipe[1]);
-                        }
-                        if(i == io){
-                            dup2(out,1);
-                            close(out);
-                        }
-                        exec_filtros(array[i]);
-                        _exit(0);
-                    }
-                    if (i < io)
-                        close(afterPipe[1]);
-                    if (i > 3)
-                        close(beforePipe);
-                    beforePipe = afterPipe[0];
-                    pids[lastProcess][acc] = pid;
-                    processes[lastProcess].pid = pid;
-                    acc++;
-
-                }
-            } else {
-            
-                if((pid = fork()) == 0) {
-                    dup2(out, 1);
-                    dup2(in, 0);
-                    close(in);
-                    close(out);
-                    
-                    exec_filtros(array[3]);
-                    _exit(0);
-                }else{
-                    pids[lastProcess][0] = pid;
-                    printf("PIDS[%d][0] -> %d\n",lastProcess,pids[lastProcess][0]);
-                }
-            }
-            lastProcess++;
-            close(in);
-            close(out);
-        }
         if(strncmp(buffer, "status", 6) == 0) {
 
             char message[1024];
