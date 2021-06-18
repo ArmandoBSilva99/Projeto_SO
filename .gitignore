@@ -1,2 +1,4 @@
 src/.vscode
 bin/*.mp3
+tmp/*
+obj/*

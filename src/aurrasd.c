@@ -148,10 +148,12 @@ void transform()
     int io = 0;
         
     char * buffer = strdup(processes[lastProcess].message);
+    printf("dupped\n");
     array[io] = strtok(buffer," ");
 
     int size = sizeFilters(processes[lastProcess].filtros);
     while(array[io] != NULL){
+        printf("array[io]->%s\n",array[io]);
         array[++io] = strtok(NULL," ");
     }
 
@@ -159,7 +161,7 @@ void transform()
         exitMatrix[lastProcess][i] = EXECUTING;
 
     diminuiFiltros(processes[lastProcess].filtros);      
-
+    printf("Diminuiu Filtros\n");
     io--;
 
 
@@ -177,6 +179,7 @@ void transform()
 
     if(io > 3)
     {
+        printf("\nHELLO\n");
         int acc = 0;
         dup2(in, 0);
         close(in);
@@ -185,7 +188,8 @@ void transform()
             if (i < io)
                 pipe(afterPipe);
             if ((pid = fork()) == 0) 
-            {
+            {   
+                printf("Son says HI!\n");
                 if (i > 3) 
                 {
                     dup2(beforePipe, 0);
@@ -202,6 +206,7 @@ void transform()
                     dup2(out,1);
                     close(out);
                 }
+                
                 exec_filtros(array[i]);
                 exit(0);
             }
@@ -220,7 +225,8 @@ void transform()
     else 
     {
         if((pid = fork()) == 0) 
-        {
+        {   
+            printf("Im in\narray[3]: %s\n", array[3]);
             dup2(out, 1);
             dup2(in, 0);
             close(in);
@@ -263,7 +269,6 @@ void alarm_handler(int sig)
             sprintf(connect,"%s%d","server_client_fifo_", processes[i].pidFifo);
             server_client_fifo = open(connect, O_WRONLY);
             transform();
-            //close(server_client_fifo);
         }
     }
 
@@ -296,7 +301,6 @@ void fillConfig(char* path){
 
     close(fd);
 }
-
 
 
 char* writeConfig(){
@@ -405,6 +409,7 @@ int main(int args, char* argv[])
             for (int j = 0; j < io-3; j++)
                 message_filters[j] = strdup(array[j+3]); 
 
+            printf("HEHE\n");
             processes[lastProcess].filtros = malloc(sizeof(char*) * (io-3));
                 
             for (int j = 0; j < io-3;j++)
@@ -414,13 +419,15 @@ int main(int args, char* argv[])
             if(checkConfig(processes[lastProcess].filtros) == 0){
                 processes[lastProcess].pidFifo = pidFifo;
                 exitStatus[lastProcess] = WAITING;
-                alarm(1);            
+                alarm(1);           
             }
             else
                 exitStatus[lastProcess] = EXECUTING;
+               
         }
         
-        if(processes[lastProcess].message && strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING))
+        if(processes[lastProcess].message && strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING)){
+            printf("executing transform\n");
             transform();
         
         if(strncmp(buffer, "status", 6) == 0) 
