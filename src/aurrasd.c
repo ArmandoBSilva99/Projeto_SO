@@ -18,6 +18,7 @@
 #define WAITING 5
 #define ERROR 255
 #define MAX_BUF 1024
+#define MAXCLIENTS 10
 
 //struct aurrasconfig
 struct aurrasdconfig {
@@ -31,28 +32,23 @@ struct process{
     int pid;
     char* message;
     char** filtros;
+    int pidFifo;
 } *Process;
 
 struct process processes[2048];
 
 struct aurrasdconfig aurray[5];
 
-//Variáveis para realn
-char read_buffer[2048];
-int read_buffer_pos = 0;    
-int read_buffer_end = 0;
 char* filtros_array[2048];
 int exitStatus[2048];
 int exitMatrix[2048][3];
-int execTimes[2048];
-char commTimes[2048];
-int monitors[2048];
 int pids[2048][3];
-int numPids[2048];
 int lastProcess = 0;
-int tExec = -1;
-int tInac = -1;
 
+char* fifos[MAXCLIENTS];
+int lastFifo = 0;
+
+char aurrasd_filters[30];
 //pipe
 int server_client_fifo;
 
@@ -69,10 +65,17 @@ ssize_t myreadln(int fildes, void* buf, size_t nbyte){
     }
     return size;
 }
+int sizeFilters(char ** filters)
+{
+    int size = 0;
+    while(filters[size]) size++;
+    return size;
+}
 
 void aumentaFiltros(char** filters)
 {
-    for (int i = 0; i < 3; i++)
+    int size = sizeFilters(filters);
+    for (int i = 0; i < size; i++)
         for(int j = 0; j < 5; j++) 
             if ((strcmp(filters[i],aurray[j].name) == 0))
                 aurray[j].max++;
@@ -80,7 +83,8 @@ void aumentaFiltros(char** filters)
 
 void diminuiFiltros(char** filters)
 {
-    for (int i = 0; i < 3; i++)
+    int size = sizeFilters(filters);
+    for (int i = 0; i < size; i++)
         for(int j = 0; j < 5; j++) 
             if ((strcmp(filters[i],aurray[j].name) == 0))
                 aurray[j].max--;
@@ -90,13 +94,10 @@ void child_handler(int sig){
     int status;
     pid_t pid;
     while((pid = waitpid(-1, &status, WNOHANG)) > 0){
-        printf("ENTREI\n");
-        printf("PID A SAIR -> %d\n", pid);
         for(int i = 0; i < lastProcess; i++){
             for(int j = 0; j < 3; j++){
                 if(pids[i][j] == pid){
                     exitMatrix[i][j] = FINISHED;
-                    printf("PID TERMINADO -> %d\n", pids[i][j]);
                     if(exitStatus[i] == EXECUTING && exitMatrix[i][0] == FINISHED && exitMatrix[i][1] == FINISHED && exitMatrix[i][2] == FINISHED){
                         exitStatus[i] = FINISHED;
                         aumentaFiltros(processes[i].filtros);
@@ -110,45 +111,63 @@ void child_handler(int sig){
 
 void exec_filtros(char* filtro){
 
+    char echo[100];
+    sprintf(echo,"%s/aurrasd-echo",aurrasd_filters);
+
+    char doubl[100]; 
+    sprintf(doubl,"%s/aurrasd-gain-double",aurrasd_filters);
+
+    
+    char half[100]; 
+    sprintf(half,"%s/aurrasd-gain-half",aurrasd_filters);
+
+    char temp_double[100]; 
+    sprintf(temp_double,"%s/aurrasd-tempo-double",aurrasd_filters);
+
+    
+    char temp_half[50]; 
+    sprintf(temp_half,"%s/aurrasd-tempo-half",aurrasd_filters);
+
     if (strcmp(filtro,"echo") == 0)        
-        execl("aurrasd-filters/aurrasd-echo","aurrasd-echo", NULL);
+        execl(echo,"aurrasd-echo", NULL);
     if (strcmp(filtro,"alto") == 0)
-        execl("aurrasd-filters/aurrasd-gain-double","aurrasd-gain-double", NULL);
+        execl(doubl,"aurrasd-gain-double", NULL);
     if (strcmp(filtro,"baixo") == 0)
-        execl("aurrasd-filters/aurrasd-gain-half","aurrasd-gain-half", NULL);
+        execl(half,"aurrasd-gain-half", NULL);
     if (strcmp(filtro,"rapido") == 0)
-        execl("aurrasd-filters/aurrasd-tempo-double","aurrasd-tempo-double", NULL);
+        execl(temp_double,"aurrasd-tempo-double", NULL);
     if (strcmp(filtro,"lento") == 0)
-        execl("aurrasd-filters/aurrasd-tempo-half","aurrasd-tempo-half", NULL);
+        execl(temp_double,"aurrasd-tempo-half", NULL);
 }
+
+
 
 void transform()
 {
     char *array[100];
     int io = 0;
-
-    printf("Message: %s\n", processes[lastProcess].message);
-    printf("PROCESSO -> %s\n", processes[lastProcess].message);
         
     char * buffer = strdup(processes[lastProcess].message);
     array[io] = strtok(buffer," ");
 
+    int size = sizeFilters(processes[lastProcess].filtros);
     while(array[io] != NULL){
         array[++io] = strtok(NULL," ");
     }
 
-    for(int i = 0; i < 3; i++)
+    for(int i = 0; i < size; i++)
         exitMatrix[lastProcess][i] = EXECUTING;
 
     diminuiFiltros(processes[lastProcess].filtros);      
 
     io--;
 
+
     int in = open(array[1], O_RDONLY,0644);
     int out = open(array[2], O_WRONLY | O_TRUNC | O_CREAT,0644);
 
     char message[100];
-    sprintf(message, "\nnova tarefa #%d\n\n", lastProcess + 1);
+    sprintf(message, "\nProcessing #%d\n\n", lastProcess + 1);
     write(server_client_fifo, message, strlen(message));
     close(server_client_fifo);
             
@@ -213,7 +232,6 @@ void transform()
         else
         {
             pids[lastProcess][0] = pid;
-            printf("PIDS[%d][0] -> %d\n",lastProcess,pids[lastProcess][0]);
         }
     }
     
@@ -223,8 +241,10 @@ void transform()
 }
 
 
+
 int checkConfig(char** filters){
-    for (int i = 0; i < 3; i++)
+    int size = sizeFilters(filters);
+    for (int i = 0; i < size; i++)
         for(int j = 0; j < 5; j++) 
             if ((strcmp(filters[i],aurray[j].name) == 0) && aurray[j].max == 0)
                 return 0;
@@ -235,11 +255,13 @@ int checkConfig(char** filters){
 void alarm_handler(int sig)
 {
     for(int i = 0; i <= lastProcess; i++){
-        printf("FOR:EXIT STATUS -> %d -> %d\n",i, exitStatus[i]);
         if((exitStatus[i] == WAITING) && checkConfig(processes[i].filtros)){
             exitStatus[i] = EXECUTING;
-            printf("EXIT STATUS -> %d -> %d",i, exitStatus[i]);
             //server_client_fifo = open("server_client_fifo", O_WRONLY);
+            close(server_client_fifo);
+            char connect[30];
+            sprintf(connect,"%s%d","server_client_fifo_", processes[i].pidFifo);
+            server_client_fifo = open(connect, O_WRONLY);
             transform();
             //close(server_client_fifo);
         }
@@ -287,15 +309,45 @@ char* writeConfig(){
     return ret;    
 }
 
+void connectClient(char * connectMessage)
+{
+    char *array[5];
+    int i = 0;
 
-int main(int args, char* argv[]){
+    array[i] = strtok(connectMessage," ");
+
+    while(array[i] != NULL)
+        array[++i] = strtok(NULL," ");
+            
+    if(lastFifo < MAXCLIENTS - 1)
+    {
+        fifos[lastFifo] = strdup(array[1]);
+        lastFifo++;
+    }
+
+}
+
+
+int getPidFromString(char * pidMessage)
+{
+    char *array[5];
+    int i = 0;
+
+    array[i] = strtok(pidMessage," ");
+
+    while(array[i] != NULL)
+        array[++i] = strtok(NULL," ");
+
+    return atoi(array[1]);
+}
+
+
+int main(int args, char* argv[])
+{
     if (args == 3){
         fillConfig(argv[1]);
 
-        if ((strcmp(argv[2], "aurras-filters") != 0)){
-            write(1, "Filtros não encontrados!\n",26);
-            exit(-1);
-        }    
+        strcpy(aurrasd_filters,argv[2]);
     }
     else {
         write(1,"Argumentos errados! Tente:\n./aurrasd config-filename filters-folder\n",68);
@@ -303,39 +355,54 @@ int main(int args, char* argv[]){
     }
 
     mkfifo("client_server_fifo", 0644);
-    mkfifo("server_client_fifo", 0644);
+
     signal(SIGCHLD, child_handler);
     signal(SIGALRM, alarm_handler);
+
+
     while(1){
 
         char* buffer = calloc(MESSAGESIZE, sizeof(char));
         int client_server_fifo = open("client_server_fifo", O_RDONLY); 
-        server_client_fifo = open("server_client_fifo", O_WRONLY);
-        printf("AQUI\n");
         read(client_server_fifo, buffer, MESSAGESIZE);
-        printf("%s\n", buffer);
         
         char *array[100];
         int io = 0;
         
-        printf("1\n");
+        if(strncmp(buffer,"connect",7) == 0)
+        {
+            connectClient(buffer);
+            write(1,"connected\n",10);
+            close(client_server_fifo);
+        }
+
+
+        int pidFifo = -1;
+        if(strncmp(buffer,"pid",3) == 0)
+        {
+            char scf[30];
+            pidFifo = getPidFromString(buffer);
+            sprintf(scf,"%s%d","server_client_fifo_", pidFifo);
+            server_client_fifo = open(scf, O_WRONLY);
+            free(buffer);
+            buffer = calloc(MESSAGESIZE, sizeof(char));
+            read(client_server_fifo, buffer, MESSAGESIZE);
+        }            
+
+        
         if(strncmp(buffer,"transform",9) == 0)
         {
-            printf("2\n");
-
             processes[lastProcess].message = strdup(buffer);
-
 
             array[io] = strtok(buffer," ");
 
             while(array[io] != NULL){
                 array[++io] = strtok(NULL," ");
             }
-
-
+            io--;
             char** message_filters = (char**) malloc(3 * sizeof(char*));
 
-            for (int j = 0; j < 3; j++)
+            for (int j = 0; j < io-3; j++)
                 message_filters[j] = strdup(array[j+3]); 
 
             processes[lastProcess].filtros = malloc(sizeof(char*) * (io-3));
@@ -343,15 +410,9 @@ int main(int args, char* argv[]){
             for (int j = 0; j < io-3;j++)
                 processes[lastProcess].filtros[j] = strdup(message_filters[j]);
 
-            for (int i = 0; i < io-3; i++)
-                printf("[%d] -> %s\n", i,processes[lastProcess].filtros[i]); 
-
-            for (int i = 0; i < io-3; i++)
-                printf("[%d] -> %s\n", i, message_filters[i]);      
-
         
             if(checkConfig(processes[lastProcess].filtros) == 0){
-                //write(server_client_fifo, "Pending...\n", 11);
+                processes[lastProcess].pidFifo = pidFifo;
                 exitStatus[lastProcess] = WAITING;
                 alarm(1);            
             }
@@ -362,8 +423,8 @@ int main(int args, char* argv[]){
         if(processes[lastProcess].message && strncmp(processes[lastProcess].message,"transform",9) == 0 && (exitStatus[lastProcess] == EXECUTING))
             transform();
         
-        if(strncmp(buffer, "status", 6) == 0) {
-
+        if(strncmp(buffer, "status", 6) == 0) 
+        {
             char message[1024];
             int empty = 1;
             char* conf;
@@ -371,23 +432,17 @@ int main(int args, char* argv[]){
             for(size_t i = 0; i < lastProcess; i++) {
                 if(exitStatus[i] == EXECUTING) {
                     empty = 0;
-                    printf("Message: %s\n", processes[i].message);
                     sprintf(message, "#%zu: %s\n", i+1, processes[i].message);
-                    //strcat(message, conf);
-                    write(server_client_fifo, message, strlen(message));
-                }
-                if(exitStatus[i] == FINISHED) {
-                    empty = 0;
-                    sprintf(message, "->->#%zu: %s\n", i+1, processes[i].message);
-                    //strcat(message, conf);
                     write(server_client_fifo, message, strlen(message));
                 }
             }
             if(empty) {
-                printf("Entrou no empty\n");
                 strcpy(message, "Não há tarefas em execução.\n\n");
                 write(server_client_fifo, message, strlen(message));
             }
+            char * aux = strdup(conf);
+            sprintf(conf,"%spid: %d\n",aux,pidFifo);
+            free(aux);
             write(server_client_fifo, conf, strlen(conf));
             free(conf);
             close(server_client_fifo);
